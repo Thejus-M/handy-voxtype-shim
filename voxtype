@@ -1,0 +1,53 @@
+#!/bin/bash
+# voxtype-compatible shim for the dictate service
+# (/run/media/pc/MY Drive/Projects/dictate, systemd user unit dictate.service).
+# Omarchy's dictation keybindings (F9, CTRL+TAB) and the bar's Dictation
+# indicator call `voxtype`; this script forwards them to the service socket.
+# Recording only starts when a text field has focus (see can_type.py).
+
+SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/dictate.sock"
+HERE="$(dirname "$(readlink -f "$0")")"
+
+send() { echo "$1" | socat -t 5 - "UNIX-CONNECT:$SOCK" 2>/dev/null; }
+
+ensure_running() {
+  [[ -n $(send state) ]] && return
+  systemctl --user start dictate.service
+  for _ in $(seq 50); do sleep 0.1; [[ -n $(send state) ]] && return; done
+}
+
+record() {
+  ensure_running
+  local s
+  s=$(send state)
+  # Begin only when idle and a text field can take the result.
+  begin() { [[ $s == idle || $s == error ]] && timeout 2 "$HERE/can_type.py" && send start >/dev/null; }
+  case "$1" in
+    start) begin ;;
+    stop) [[ $s == recording || $s == starting ]] && send stop >/dev/null ;;
+    toggle) if [[ $s == recording || $s == starting ]]; then send stop >/dev/null; else begin; fi ;;
+    cancel) send cancel >/dev/null ;;
+    *) echo "voxtype (dictate shim): unknown record action '$1'" >&2; exit 1 ;;
+  esac
+}
+
+status() {
+  local a s
+  for a in "$@"; do
+    [[ $a == --follow ]] || continue
+    # Stream status lines; reconnect if the service restarts.
+    while true; do
+      echo follow | socat -t 1000000000 - "UNIX-CONNECT:$SOCK" 2>/dev/null \
+        || echo '{"text": "", "alt": "idle", "class": "idle", "tooltip": "Dictation service not running", "preview": ""}'
+      sleep 2
+    done
+  done
+  s=$(send state)
+  printf '{"text": "", "alt": "%s", "class": "%s", "tooltip": "Dictation: %s"}\n' "${s:-idle}" "${s:-idle}" "${s:-stopped}"
+}
+
+case "$1" in
+  record) shift; record "$@" ;;
+  status) shift; status "$@" ;;
+  *) echo "voxtype (dictate shim): only 'record start|stop|toggle|cancel' and 'status' are supported" >&2; exit 0 ;;
+esac

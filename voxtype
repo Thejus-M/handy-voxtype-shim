@@ -1,12 +1,16 @@
 #!/bin/bash
 # voxtype-compatible shim for the dictate service
 # (/run/media/pc/MY Drive/Projects/dictate, systemd user unit dictate.service).
-# Omarchy's dictation keybindings (F9, CTRL+TAB) and the bar's Dictation
-# indicator call `voxtype`; this script forwards them to the service socket.
-# Recording only starts when a text field has focus (see can_type.py).
+# Omarchy's dictation keybindings (F9 hold-to-talk, SUPER+D toggle) and the
+# bar's Dictation indicator call `voxtype`; this script forwards them to the
+# service socket. Pressing the key is taken as the intent to dictate: the
+# can_type.py text-field check is not used, because AT-SPI only answers for
+# applications that register with the accessibility bus (not Brave/Chromium,
+# Electron or org.omarchy.agent), so it refused almost everywhere outside a
+# terminal. The service still types only into the window focused at the start
+# of recording, and falls back to the clipboard if it cannot reach it.
 
 SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/dictate.sock"
-HERE="$(dirname "$(readlink -f "$0")")"
 
 send() { echo "$1" | socat -t 5 - "UNIX-CONNECT:$SOCK" 2>/dev/null; }
 
@@ -20,8 +24,8 @@ record() {
   ensure_running
   local s
   s=$(send state)
-  # Begin only when idle and a text field can take the result.
-  begin() { [[ $s == idle || $s == error ]] && timeout 2 "$HERE/can_type.py" && send start >/dev/null; }
+  # Begin only when idle.
+  begin() { [[ $s == idle || $s == error ]] && send start >/dev/null; }
   case "$1" in
     start) begin ;;
     stop) [[ $s == recording || $s == starting ]] && send stop >/dev/null ;;

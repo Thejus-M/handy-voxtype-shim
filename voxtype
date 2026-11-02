@@ -1,9 +1,11 @@
 #!/bin/bash
 # voxtype-compatible shim for the dictate service
 # (/run/media/pc/MY Drive/Projects/dictate, systemd user unit dictate.service).
-# Omarchy's dictation keybindings (F9, CTRL+TAB) and the bar's Dictation
-# indicator call `voxtype`; this script forwards them to the service socket.
-# Recording only starts when a text field has focus (see can_type.py).
+# Omarchy's dictation keybindings (F9 hold-to-talk, SUPER+D toggle) and the
+# bar's Dictation indicator call `voxtype`; this script forwards them to the
+# service socket. With a text field focused the result is typed into it; with
+# none (see can_type.py) the service records in clipboard mode instead, so the
+# keys work in every application.
 
 SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/dictate.sock"
 HERE="$(dirname "$(readlink -f "$0")")"
@@ -20,8 +22,16 @@ record() {
   ensure_running
   local s
   s=$(send state)
-  # Begin only when idle and a text field can take the result.
-  begin() { [[ $s == idle || $s == error ]] && timeout 2 "$HERE/can_type.py" && send start >/dev/null; }
+  # Begin only when idle; type into a focused text field, else collect into
+  # the clipboard.
+  begin() {
+    [[ $s == idle || $s == error ]] || return
+    if timeout 2 "$HERE/can_type.py"; then
+      send start >/dev/null
+    else
+      send "start clipboard" >/dev/null
+    fi
+  }
   case "$1" in
     start) begin ;;
     stop) [[ $s == recording || $s == starting ]] && send stop >/dev/null ;;
